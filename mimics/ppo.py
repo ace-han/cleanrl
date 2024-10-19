@@ -124,17 +124,29 @@ class Agent(nn.Module):
 
     def get_action_and_value(self, x, action=None):
         logits = self.actor(x)
+        # when we say a distribution, we are referring to PDF(probability density function) of the distribution
+        # pdf x-axis is the event(action here is action),
+        # and the y-axis (y-axis meaning)does not care much here with one restriction =>
+        # the area under the curve from the x-axis[0, x] < 1 and the area_all = 1
+        # refer to https://www.youtube.com/watch?v=rnBbYsysPaU
         probs = Categorical(logits=logits)
         if action is None:
+            # here it involves sth called Inverse Transform Sampling using CDF(cumulative density function)
+            # and differentiation(seeking the derivative) and integration are opposite operation of each other
+            # here we randomly pick a probability from current CDF (whose y-axis [0, 1] which is a uniform distribution)
+            # and then calculate the action (x-axis value)
+            # current CDF means with current weights and biases network
             action = probs.sample()
         # probs.log_prob(action)
-        # image a distribution 2d space `probs`
-        # X axis is the action
-        # y axis is the likelihood value. refer to https://www.youtube.com/watch?v=pYxNSUDSFH4
-        # f(X) = y, the f is log(...)
+        # using PDF, plugin in action(x) to get probablity(p)
+        # and then return log(p) and using logarithm afterwards brings many benefits to ML,
+        # like no gradient explosion (no more 0.1*0.001*0.001*... =>0.000...0001 computer could not store/represent that)
+        # refer to https://www.youtube.com/watch?v=rnBbYsysPaU
         #
-        # probs.entropy() the Average surprise of states in a distribution
+        # probs.entropy()
+        # the Average surprise of states in a distribution
         # H = ∑( Ps * log(1/Ps) )
+        # refer to https://www.youtube.com/watch?v=KHVR587oW8I&t=1009s
         return action, probs.log_prob(action), probs.entropy(), self.critic(x)
 
 
@@ -308,6 +320,8 @@ if __name__ == "__main__":
         clipfracs = []
         # epoch and full batch vs mini batch
         # refer to https://blog.csdn.net/qq_38343151/article/details/102886304
+        #
+        # TODO, would not the total_loss for the first time is already 0, small enough?
         for epoch in range(args.update_epochs):
             np.random.shuffle(b_inds)
             for start in range(0, args.batch_size, args.minibatch_size):
