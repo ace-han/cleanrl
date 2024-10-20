@@ -123,6 +123,12 @@ class Agent(nn.Module):
         return self.critic(x)
 
     def get_action_and_value(self, x, action=None):
+        # p = probability,
+        # odds = p/(1-p),
+        # logit = log(odds) = log(p/(1-p))
+        # logits are interchangable with probs as below
+        # logit=log(p/(1-p)) <=> p=exp(logit)/1+exp(logit)
+        # refer to https://www.youtube.com/watch?v=ARfXDSkQf1Y
         logits = self.actor(x)
         # when we say a distribution, we are referring to PDF(probability density function) of the distribution
         # pdf x-axis is the event(action here is action),
