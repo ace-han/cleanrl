@@ -327,7 +327,7 @@ if __name__ == "__main__":
         # epoch and full batch vs mini batch
         # refer to https://blog.csdn.net/qq_38343151/article/details/102886304
         #
-        # TODO, would not the total_loss for the first time is already 0, small enough?
+        # Q1 would not the total_loss for the first time is already 0, small enough?
         for epoch in range(args.update_epochs):
             np.random.shuffle(b_inds)
             for start in range(0, args.batch_size, args.minibatch_size):
@@ -409,6 +409,9 @@ if __name__ == "__main__":
                 # Value loss
                 newvalue = newvalue.view(-1)
                 if args.clip_vloss:
+                    # Q1_A: since we only using critic_value - total_return here,
+                    # it will make the v_loss not 0
+                    # and `returns = advantages + values` from the code above
                     v_loss_unclipped = (newvalue - b_returns[mb_inds]) ** 2
                     v_clipped = b_values[mb_inds] + torch.clamp(
                         newvalue - b_values[mb_inds],
@@ -454,7 +457,7 @@ if __name__ == "__main__":
                 optimizer.zero_grad()
                 # Purpose: This computes the gradients of the loss function with respect to the parameters of the model
                 # (in this case, the agent's parameters).
-                loss.backward()
+                loss.backward()  # torch._tensor:Tensor.backward
                 # Purpose: This function applies gradient clipping to prevent excessively large gradients from destabilizing training.
                 # Significance in PPO: In reinforcement learning, particularly in deep reinforcement learning methods like PPO,
                 # gradients can sometimes become very large, which may lead to unstable updates and cause the training to diverge.
