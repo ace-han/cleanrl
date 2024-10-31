@@ -309,6 +309,7 @@ if __name__ == "__main__":
             # and receives an immediate reward (r),
             # with the goal of receiving large future return (R).
             # http://www.breloff.com/DeepRL-OnlineGAE/
+            # # https://www.youtube.com/watch?v=IScp-mZ7iS0&t=159s  (why A_t = Q(s, a) - V(s) ) V(s) as baseline
             returns = advantages + values  # for a large future returns
 
         # flatten the batch
@@ -344,6 +345,11 @@ if __name__ == "__main__":
                 # in ml, log(x) = ln(x), just using e-base
                 # we want `ratio=new/old` = `e to ln(new/old)` = `e to (ln(new) - ln(old))`
                 # and we are now `e to (ln(new) - ln(old))` => `e to ln(new/old)` => `ratio=new/old`
+                #
+                # Importance Sampling
+                # Ex~p[f(x)] (in P distribution) = ∫f(x)p(x)dx = ∫f(x)p(x)/q(x)q(x)dx = ∫f(x)q(x)dx*p(x)/q(x) = Ex~q[f(x) * p(x)/q(x)] (in Q distribution)
+                # assuming p distribution is similar to q distribution  p(x)/q(x) ≈ 1 PPO makes this assumption in J(θ) gradient derivatives
+                # refer to  https://www.youtube.com/watch?v=IScp-mZ7iS0&t=159s
                 logratio = (
                     newlogprob - b_logprobs[mb_inds]
                 )  # first time all [0, 0, ...]
@@ -359,10 +365,6 @@ if __name__ == "__main__":
                     # the smaller, the more similar
                     old_approx_kl = (-logratio).mean()
                     approx_kl = ((ratio - 1) - logratio).mean()
-                    # clipfracs is used to monitor how often the policy updates are being clipped
-                    # By analyzing clipfracs, one can understand how often clipping occurs during training.
-                    # Frequent clipping might indicate that the learning rate or update steps are too aggressive,
-                    # whereas infrequent clipping may imply under-tuning.
                     clipfracs += [
                         ((ratio - 1.0).abs() > args.clip_coef).float().mean().item()
                     ]
@@ -381,11 +383,13 @@ if __name__ == "__main__":
                 # In reinforcement learning, particularly in policy gradient methods, the objective is to maximize the expected return.
                 # This is usually expressed as minimizing the negative of the expected return to fit the usual optimization framework.
                 # If we denote the objective function as J(θ), our goal is to maximize this with respect to parameters θ.
+                # and Objective function in this case is to maximize the advantages!!!
                 # However, optimization libraries commonly minimize functions, so it's standard practice to multiply by -1 (i.e., minimize −J(θ)).
                 # the minus sign `-` flips the direction of the optimization
                 # 2. min vs max
                 # due to 1,
                 # using `-mb_advantages` => `torch.max` or `mb_advantages` => `-.torch.min`
+                # refer to https://www.youtube.com/watch?v=IScp-mZ7iS0&t=159s for objective function as J(θ)
                 pg_loss1 = -mb_advantages * ratio
                 pg_loss2 = -mb_advantages * torch.clamp(
                     ratio, 1 - args.clip_coef, 1 + args.clip_coef
@@ -404,6 +408,17 @@ if __name__ == "__main__":
                 # since `min(ratio*adv, clipped_ratio*adv)` in fact only prioritizes one direction(-∞, upper bound]
                 # and In practice, unexpected large values are usually rare and handled by various training strategies
                 # (e.g., smaller learning rates, better advantage estimations, regularization --> mb_advantages already doing normalization).
+                # ======Above is wrong!!! Advantage should be taken into account, too, A is a vector, not a constant scalar
+                #
+                # negative advantage value means the current action is not favorable,
+                # so the new policy should be changed to yield lower probability for the current action and state
+                #
+                # in [Figure 1 on page 3 of the PPO paper](https://arxiv.org/pdf/1707.06347.pdf) describes this situation.
+                # They explicitly say "... note that the probability ratio r is clipped at 1 - epsilon or 1 + epsilon depending on whether the advantage is positive or negative
+                # when A >= 0, this PPO-Clip objective function L_clip = F(r, A, epsilon) = min(rA, (1+epsilon)A)
+                # when A <  0, this PPO-Clip objective function L_clip = F(r, A, epsilon) = min(rA, (1-epsilon)A)
+                # refer to
+                # https://drive.google.com/file/d/1PDzn9RPvaXjJFZkGeapMHbHGiWWW20Ey/view?usp=drivesdk
                 pg_loss = torch.max(pg_loss1, pg_loss2).mean()
 
                 # Value loss
@@ -487,10 +502,38 @@ if __name__ == "__main__":
         )
         writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
         writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
+        # Ideally, entropy should start high and gradually decrease as the policy converges.
+        #
+        # If entropy remains too low, consider increasing the entropy coefficient to promote more exploration.
+        # A higher β(ent_coef) encourages more exploration, which can be useful in complex or deceptive environments
+        # but might slow down exploitation in simpler settings
+        #
+        # Higher Entropy: Indicates that the policy is exploring a wide range of actions.
+        # This is generally desirable in the early stages of training to explore the environment.
+        # Lower Entropy: Implies that the policy has become more confident and is exploiting specific actions that it believes are optimal.
+        # While lower entropy is a natural progression, excessively low entropy might lead to premature convergence.
+        #
+        # just like vector, entropy controls the direction, approx_kl controls magnitude
         writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
+        # This is KL divergence K1 Estimator
         writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
+        #
+        # This is KL divergence K3 Estimator
+        # K3 is more accurate than K1, so just use K3 will be ok
+        #
         writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
+        # clipfracs is used to monitor how often the policy updates are being clipped
+        # By analyzing clipfracs, one can understand how often clipping occurs during training.
+        # Monitoring Clipping Activation: A high fraction indicates that many updates are being clipped, suggesting that the policy is undergoing large changes. This might be a sign to reduce the learning rate or adjust the clip_coef.
+        # Stability Check: Consistently low clipping fractions can imply that the policy updates are too conservative, potentially slowing down learning.
+        # Hyperparameter Tuning: Understanding how often clipping occurs helps in fine-tuning hyperparameters like clip_coef and the learning rate for optimal performance.
+        #
+        # just tracking how frequent and far away from [1-epsilon, 1+epsilon]
         writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
+        # Explained Variance
+        # it is the difference between the expected value and the predicted value
+        # A machine learning model must have at least 60 percent of explained variance
+        # refer to https://blog.csdn.net/YHKKun/article/details/137057987
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
         # SPS => steps per second
         # If SPS is lower than expected, it may indicate performance bottlenecks,
