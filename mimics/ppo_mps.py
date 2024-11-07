@@ -345,6 +345,12 @@ if __name__ == "__main__":
         writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
         writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
         writer.add_scalar("losses/explained_variance", explained_var, global_step)
+        # Why the SPS metric decrease?
+        #
+        # Batch Size and GPU Utilization: If the batch size is too small, the GPU might not be fully utilized.
+        # GPUs are optimally used with larger batch sizes, and small ones can result in overhead without significant gains.
+        # Data Transfer Overhead: Moving data between the CPU and GPU introduces overhead.
+        # If the data transfer time is significant compared to the computation time, this can reduce the overall performance.
         print("SPS:", int(global_step / (time.time() - start_time)))
         writer.add_scalar(
             "charts/SPS", int(global_step / (time.time() - start_time)), global_step
